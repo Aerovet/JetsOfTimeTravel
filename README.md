@@ -10,6 +10,7 @@ Jets of Time Randomizer for Handheld Devices
 ### Setup
 - Update the `snes_rom_path` to be the absolute path to your snes rom folder.  The Chrono Trigger rom should be in this folder
 - Update the `rom_file` to match the file name of the Chrono Trigger rom
+- Do a `gitsubmodule update --init`, since `jetsoftime` is a dependency
 - scp the entire JetsOfTimeTravel repo into the pygame folder on the device
 - Update the game list on the device (or restart the device)
 - Run `jetsoftime` game on the pygame menu
