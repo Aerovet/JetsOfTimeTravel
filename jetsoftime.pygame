@@ -26,9 +26,9 @@ Assuming you have the ability to run pygames (anbernic devices already setup to 
 <----- Setup ----->
 Update the `snes_rom_path` to be the absolute path to your snes rom folder.  The Chrono Trigger rom should be in this folder
 Update the `rom_file` to match the file name of the Chrono Trigger rom
-scp the entire jets of time repo into the pygame folder on the device
+scp the entire JetsOfTimeTravel repo into the pygame folder on the device
 Update the game list on the device (or restart the device)
-Run `jetsoftime_randomizer` game on the pygame menu
+Run `jetsoftime` game on the pygame menu
 This will launch the GUI interface.
 
 <----- Use Instructions ----->
@@ -44,29 +44,9 @@ Developer TODO List
 Auto detect rom and snes rom path on device
 Setup process for deployment to avoid copying over the entire repo
 Add another column for flags so that more can be displayed on screen, or split them up into different flag categories (such as Qol)
-
-Refactor Tests:
-
-Getting the error message when trying to generate:
-
-
-Traceback (most recent call last):
-  File "/home/nausea911/Downloads/romhacks/jetsoftime/JetsOfTimeTravel/jetsoftime.pygame", line 455, in <module>
-    game_state.focusable.activate()
-  File "/home/nausea911/Downloads/romhacks/jetsoftime/JetsOfTimeTravel/jetsoftime.pygame", line 194, in activate
-    self.callback()
-  File "/home/nausea911/Downloads/romhacks/jetsoftime/JetsOfTimeTravel/jetsoftime.pygame", line 158, in generate_rom
-    rando.set_random_config()
-  File "/home/nausea911/Downloads/romhacks/jetsoftime/JetsOfTimeTravel/jetsoftime/sourcefiles/randomizer.py", line 180, in set_random_config
-    if rset.GameFlags.MYSTERY in self.settings.gameflags:
-  File "/home/nausea911/miniforge3/envs/jetsoftime/lib/python3.10/enum.py", line 876, in __contains__
-    raise TypeError(
-TypeError: unsupported operand type(s) for 'in': 'GameFlags' and 'GameFlags'
-
 '''
 
 snes_rom_path = '/userdata/roms/snes' # TODO(user):  Update if needed
-snes_rom_path = '/home/nausea911/Downloads/romhacks/jetsoftime' # TODO(user):  Update if needed
 rom_file='ct.sfc' # TODO(user): Update if needed
 output_path = os.path.join(snes_rom_path,'jetsoftime_rom')
 
