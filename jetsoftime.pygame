@@ -3,6 +3,7 @@ import sys
 import subprocess
 import os
 import random
+import copy
 from pathlib import Path
 
 path = os.path.abspath('jetsoftime')
@@ -76,9 +77,19 @@ column_start_location = 20
 # —————— Colors ——————
 WHITE = (255, 255, 255)
 GRAY = (200, 200, 200)
+DARKGRAY = (100, 100, 100)
 DARK = (50, 50, 50)
 BLUE = (0, 120, 215)
 RED = (200, 0, 0)
+
+# —————— Sounds ——————
+pygame.mixer.init()
+rom_complete_sound = pygame.mixer.Sound('sounds/epoch_warp.wav')
+rom_generate_sound = pygame.mixer.Sound('sounds/epoch_warp_prep.wav')
+
+# —————— GamePad ——————
+GP_A = 97
+GP_B = 98
 
 # —————— Class definitions ——————
 
@@ -121,6 +132,9 @@ class GameState():
         self.generating_rom = False
         self.rom_name = ''
         self.rom_timer = None
+        self.rom_complete_sound = False
+
+        self.lock_controls = False
         self.__dict__.update(kwargs)
 
 
@@ -157,6 +171,7 @@ class GameState():
         global settings
 
         self.generating_rom=True
+        rom_generate_sound.play()
 
         self.set_focusables()
 
@@ -173,9 +188,15 @@ class GameState():
         writer.write_output_rom(Path(output_path))
         
         self.generating_rom=False
+        rom_generate_sound.stop()
         self.rom_name = f'{writer.out_string}.sfc'
         self.rom_timer = pygame.time.get_ticks()
+        self.rom_complete_sound = True
         self.set_focusables()
+
+    def exit_game(self):
+        pygame.quit()
+        sys.exit()
 
 # —————— Helpers ——————
 def draw_text(text, pos, font, color=DARK):
@@ -253,7 +274,7 @@ class RadioButton():
         if self.group in game_state.panels:
 
             if game_state.panels[self.group].setting_attribute == 'preset_choice': # Preset
-                settings = game_state.panels[self.group].options[self.label]
+                settings = copy.deepcopy(game_state.panels[self.group].options[self.label])
                 settings.preset_choice = self.label 
             else: # Single Category
                 settings.__setattr__(game_state.panels[self.group].setting_attribute, game_state.panels[self.group].options[self.label])
@@ -308,6 +329,89 @@ class CheckBox():
         settings.gameflags = GameFlags(flags_value)
         settings.fix_flag_conflicts()
 
+# —————— Slider ——————
+class Slider():
+    def __init__(self, pos, label, group, increment = 10, min_val=1, max_val=9, start_val=None):
+
+        self.label = label
+        self.group = group
+        self.radius = int(font.get_height())
+        self.x = pos[0]
+        self.y = pos[1]
+        self.inc = increment
+        self.length = self.inc*(max_val-min_val)
+
+        self.min_val = min_val
+        self.max_val = max_val
+        self.value = None
+        self.handle_x = None
+        self.handle_radius = 5
+        self.handle_y = self.y+self.radius/2
+        self.is_focused = False
+
+        self.rect = pygame.Rect(self.x, self.y, self.length, self.radius)
+
+        # Compute handle x from initial value
+        self.dragging = False
+
+    def draw(self, is_focused=False):
+        global settings,game_state
+        self.is_focused = is_focused
+
+        # Create radio button for option
+        button_text = ' '.join([s.capitalize() for s in self.label.split(' ')])
+        draw_text(button_text, (self.x, self.y - 15), font)
+
+        # Track
+        pygame.draw.rect(screen, DARK, self.rect,1)
+
+        # Handle
+
+        # Get current setting
+        self.value = settings.__getattribute__(game_state.panels[self.group].setting_attribute).__getattribute__(game_state.panels[self.group].options[self.label])
+        self.handle_x = self.x + int((self.value - self.min_val) / (self.max_val - self.min_val) * self.length)
+        pygame.draw.circle(screen, DARK, (self.handle_x, self.handle_y), self.handle_radius)
+
+        # Value text
+        txt = font.render(f"{self.value}", True, DARK)
+        screen.blit(txt, (self.x + self.length + 15, self.handle_y - txt.get_height()//2))
+
+        if game_state.lock_controls and self.is_focused:
+            pygame.draw.rect(screen, BLUE, self.rect.inflate(6, 6), 2)
+        elif self.is_focused:
+            pygame.draw.rect(screen, RED, self.rect.inflate(6, 6), 2)
+        
+
+    def handle_event(self, evt):
+        global game_state
+        # Check for user input and update focus location
+        if evt.type == pygame.KEYDOWN and self.is_focused:
+
+            if evt.key in (pygame.K_RETURN, pygame.K_SPACE,GP_A):
+                game_state.lock_controls = True
+                return
+            elif evt.key in (pygame.K_ESCAPE, pygame.K_HOME,GP_B):
+                game_state.lock_controls = False
+                return
+            elif evt.key == pygame.K_RIGHT and game_state.lock_controls:
+                dx = self.inc
+            elif evt.key == pygame.K_LEFT and game_state.lock_controls:
+                dx = -self.inc
+            else:
+                return
+
+            self.handle_x = max(self.x, min( self.handle_x + dx, self.x + self.length))
+            rel = (self.handle_x - self.x) / self.length
+            self.value = round(self.min_val + rel * (self.max_val - self.min_val))
+            self.activate()
+
+    def activate(self):
+        global settings, game_state
+        
+        if self.group in game_state.panels:
+            settings.__getattribute__(game_state.panels[self.group].setting_attribute).__setattr__(game_state.panels[self.group].options[self.label],self.value)
+
+
 
 # —————— Game Settings ——————
 game_state = GameState()
@@ -318,11 +422,42 @@ settings.preset_choice = "Default"
 
 # —————— Preset configurations ——————
 presets = {'Default':Settings(),
-           'New Player':Settings.get_new_player_presets(),
            'Race':Settings.get_race_presets(),
-           'Tourney T8':Settings.get_tourney_top8_preset(),
+           'Gato Cup':Settings.get_new_player_presets(),
+           'Millennial Prix':Settings.get_race_presets(),
+           'Catalack Top 8':Settings.get_tourney_top8_preset(),
+           'Legacy of Cyrus':Settings.get_race_presets(),
            'Lost Worlds':Settings.get_lost_worlds_presets(),
+           'New Player':Settings.get_new_player_presets(),
            'Hard':Settings.get_hard_presets()}
+
+# —————— Patch in presets ——————
+
+# Legacy of Cyrus
+presets['Legacy of Cyrus'].game_mode = GameMode.LEGACY_OF_CYRUS
+presets['Legacy of Cyrus'].gameflags = (GameFlags.FIX_GLITCH |
+                                        GameFlags.FAST_PENDANT |
+                                        GameFlags.UNLOCKED_MAGIC |
+                                        GameFlags.FAST_TABS |
+                                        GameFlags.GEAR_RANDO)
+presets['Legacy of Cyrus'].ro_settings.flags = ROFlags.BOSS_SPOT_HP
+
+# Gato Cup
+presets['Gato Cup'].gameflags = presets['Gato Cup'].gameflags | GameFlags.BOSS_RANDO | GameFlags.BOSS_SIGHTSCOPE | GameFlags.FREE_MENU_GLITCH
+presets['Gato Cup'].ro_settings.flags = ROFlags.BOSS_SPOT_HP
+presets['Gato Cup'].tab_settings.power_tab_min = 2
+presets['Gato Cup'].tab_settings.power_tab_max = 4
+presets['Gato Cup'].tab_settings.magic_tab_min = 2
+presets['Gato Cup'].tab_settings.magic_tab_max = 3
+presets['Gato Cup'].tab_settings.speed_tab_min = 1
+presets['Gato Cup'].tab_settings.speed_tab_max = 1
+
+# Millennial Prix
+presets['Millennial Prix'].gameflags = presets['Millennial Prix'].gameflags | GameFlags.FAST_TABS
+presets['Millennial Prix'].ro_settings.flags = ROFlags.BOSS_SPOT_HP
+
+
+
 flags =  {name:False for name in GameFlags._member_names_}
 
 active_panel_dict = {}
@@ -347,8 +482,14 @@ active_panel_dict['techshop'] = ActivePanel(options={'tech':TechOrder.inv_str_di
                                        location = 3,
                                        name = 'techshop')         
 
+tab_options = {f"{key.split('_')[0].capitalize()} Tab {key.split('_')[1].capitalize()}":key for key in TabSettings().to_jot_json() if key.endswith('max') or key.endswith('min')}
+active_panel_dict['tabs'] = ActivePanel(options=tab_options,
+                                 setting_attribute = 'tab_settings',
+                                 location = 4,
+                                 name = 'tabs')
+
 active_panel_dict['flags'] = ActivePanel(options = flags,
-                                  location = 4,
+                                  location = 5,
                                   name = 'flags')            
 
 
@@ -361,8 +502,10 @@ buttons = [
     Button((20, 60, 100, 30), "Mode", active_panel_dict['mode'].callback),
     Button((20, 100, 100, 30), "Difficulty", active_panel_dict['difficulty'].callback),
     Button((20, 140, 100, 30), "Tech/Shop", active_panel_dict['techshop'].callback),
-    Button((20, 180, 100, 30), "Flags", active_panel_dict['flags'].callback),
-    Button((20, screen_height - 60, 100, 30), "Generate", game_state.generate_rom)
+    Button((20, 180, 100, 30), "Tabs", active_panel_dict['tabs'].callback),
+    Button((20, 220, 100, 30), "Flags", active_panel_dict['flags'].callback),
+    Button((20, screen_height - 80, 100, 30), "Generate", game_state.generate_rom),
+    Button((20, screen_height - 40, 100, 30), "Exit", game_state.exit_game)
 ]
 
 # TODO:  Can I move this to the class level?  Seems like a lot of duplicate code
@@ -396,6 +539,11 @@ shop_radios = [ RadioButton((PANEL_X, y), lbl, "shop")  for y, lbl in option_but
 
 active_panel_dict['techshop'].widgets =  {"Tech Order": tech_radios, 'Shop Prices': shop_radios}
 
+# Tab Settings
+option_buttons = [(button_start + button_step*i, s) for i, s in  enumerate(tab_options)]
+active_panel_dict['tabs'].widgets = [ Slider((PANEL_X, y), lbl, "tabs") for y, lbl in option_buttons]
+
+
 # Game flags
 flag_buttons = [(column_start_location + (font_flags.get_height()+1)*i, s) for i, s in  enumerate(flags)]
 active_panel_dict['flags'].widgets = [ CheckBox((PANEL_X, y), lbl, font_flags) for y, lbl in flag_buttons]
@@ -417,8 +565,14 @@ while True:
     if game_state.generating_rom:
         continue
     elif game_state.rom_timer and now - game_state.rom_timer <= 2000:
+
+        if game_state.rom_complete_sound:
+            game_state.rom_complete_sound = False
+            rom_complete_sound.play()
+
         draw_text(f"ROM Complete: {game_state.rom_name}", (PANEL_X, screen_height - 60), font, BLUE)
         pygame.display.flip()
+    
         continue
 
     screen.fill(WHITE)
@@ -430,7 +584,7 @@ while True:
         # —————— User Input and Navigation ——————
 
         # Check for user input and update focus location
-        if evt.type == pygame.KEYDOWN:
+        if evt.type == pygame.KEYDOWN and not game_state.lock_controls:
   
             # Check if focus location is on the left or right side and get column length to determine when to wrap around
             focus_idx = game_state.focused_idx
@@ -462,7 +616,7 @@ while True:
                 else: # If on the right side, current active menu button
                     focus_idx = game_state.active_panel.location
 
-            elif evt.key in (pygame.K_RETURN, pygame.K_SPACE,97,98):  # 97 and 98 are A&B buttons on Anbernic Devices, typically
+            elif evt.key in (pygame.K_RETURN, pygame.K_SPACE,GP_A,GP_B):  # 97 and 98 are A&B buttons on Anbernic Devices, typically
                 game_state.focusable.activate()
 
             game_state.focused_idx = focus_idx
