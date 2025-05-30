@@ -12,6 +12,7 @@ for dirpath, _, _ in os.walk(path):
 # from jetsoftime.sourcefiles.randosettings import *
 # from jetsoftime.sourcefiles.randomizer import *
 import randomizer
+import ctoptions
 from randosettings import Settings, GameFlags, Difficulty, ShopPrices, \
     TechOrder, TabSettings, TabRandoScheme, ROSettings, ROFlags, \
     CosmeticFlags, GameMode, MysterySettings, CharNames
@@ -86,6 +87,7 @@ RED = (200, 0, 0)
 pygame.mixer.init()
 rom_complete_sound = pygame.mixer.Sound('sounds/epoch_warp.wav')
 rom_generate_sound = pygame.mixer.Sound('sounds/epoch_warp_prep.wav')
+# TODO:  background sound
 
 # —————— GamePad ——————
 GP_A = 97
@@ -459,7 +461,14 @@ presets['Millennial Prix'].ro_settings.flags = ROFlags.BOSS_SPOT_HP
 
 
 flags =  {name:False for name in GameFlags._member_names_}
+tab_options = {f"{key.split('_')[0].capitalize()} Tab {key.split('_')[1].capitalize()}":key for key in TabSettings().to_jot_json() if key.endswith('max') or key.endswith('min')}
+ctopts = {' '.join([s.capitalize() for s in key.split('_')]):key for key in dict(ctoptions.CTOpts().__iter__())}
+ctopt_flags = ['stereo_audio', 'save_menu_cursor', 'save_battle_cursor', 'save_tech_cursor', 'skill_item_info']
+ctopt_flags = {key:value for key, value in ctopts.items() if value in ctopt_flags}
 
+ctopt_sliders = ['battle_speed', 'battle_msg_speed', 'menu_background']
+ctopt_sliders = {key:value for key, value in  ctopts.items() if value in ctopt_sliders}
+# Presets
 active_panel_dict = {}
 active_panel_dict['presets'] = ActivePanel(options=presets,
                                     setting_attribute = 'preset_choice',
@@ -482,7 +491,6 @@ active_panel_dict['techshop'] = ActivePanel(options={'tech':TechOrder.inv_str_di
                                        location = 3,
                                        name = 'techshop')         
 
-tab_options = {f"{key.split('_')[0].capitalize()} Tab {key.split('_')[1].capitalize()}":key for key in TabSettings().to_jot_json() if key.endswith('max') or key.endswith('min')}
 active_panel_dict['tabs'] = ActivePanel(options=tab_options,
                                  setting_attribute = 'tab_settings',
                                  location = 4,
@@ -492,6 +500,10 @@ active_panel_dict['flags'] = ActivePanel(options = flags,
                                   location = 5,
                                   name = 'flags')            
 
+active_panel_dict['options'] = ActivePanel(options = ctopt_sliders,
+                                  setting_attribute = 'ctoptions',
+                                  location = 6,
+                                  name = 'options')   
 
 # —————— Instantiate widgets ——————
 button_start = 50
@@ -504,6 +516,7 @@ buttons = [
     Button((20, 140, 100, 30), "Tech/Shop", active_panel_dict['techshop'].callback),
     Button((20, 180, 100, 30), "Tabs", active_panel_dict['tabs'].callback),
     Button((20, 220, 100, 30), "Flags", active_panel_dict['flags'].callback),
+    Button((20, 260, 100, 30), "Options", active_panel_dict['options'].callback), # TODO: Update Options name to something like Game Options of CT Options.  Requires updating button length
     Button((20, screen_height - 80, 100, 30), "Generate", game_state.generate_rom),
     Button((20, screen_height - 40, 100, 30), "Exit", game_state.exit_game)
 ]
@@ -549,6 +562,19 @@ flag_buttons = [(column_start_location + (font_flags.get_height()+1)*i, s) for i
 active_panel_dict['flags'].widgets = [ CheckBox((PANEL_X, y), lbl, font_flags) for y, lbl in flag_buttons]
 
 
+# Game Options
+ctopt_flags = ['stereo_audio', 'save_menu_cursor', 'save_battle_cursor', 'save_tech_cursor', 'skill_item_info']
+ctopt_flags = {key:value for key, value in ctopts.items() if value in ctopt_flags}
+
+ctopt_sliders = ['battle_speed', 'battle_msg_speed', 'menu_background']
+ctopt_sliders = {key:value for key, value in  ctopts.items() if value in ctopt_sliders}
+
+print 
+# TODO: Implement ctoption flags
+option_buttons = [(button_start + button_step*i, s) for i, s in  enumerate(ctopt_sliders)]
+active_panel_dict['options'].widgets = [ Slider((PANEL_X, y), lbl, "options", min_val = 0, max_val = 7) for y, lbl in option_buttons]
+
+
 # —————— Initialize game state ——————
 game_state.menu_buttons = buttons
 game_state.panels = active_panel_dict
@@ -585,6 +611,7 @@ while True:
 
         # Check for user input and update focus location
         if evt.type == pygame.KEYDOWN and not game_state.lock_controls:
+
   
             # Check if focus location is on the left or right side and get column length to determine when to wrap around
             focus_idx = game_state.focused_idx
@@ -596,7 +623,6 @@ while True:
                 column = 1
                 column_start = len(game_state.menu_buttons)
                 column_end = column_start + game_state.active_panel.length -1
-
 
             if evt.key == pygame.K_UP:
                 if focus_idx == column_start: # Check to wrap around
