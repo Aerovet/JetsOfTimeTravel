@@ -288,31 +288,36 @@ class RadioButton():
 
 # —————— CheckBox ——————
 class CheckBox():
-    def __init__(self, pos, label, font):
+    def __init__(self, pos, label, font, group):
+        self.pos = pos
         self.radius = int(font.get_height())
         self.rect = pygame.Rect(pos[0], pos[1], self.radius, self.radius)
         self.label = label
         self.font = font
+        self.group = group
+        self.flag = False
 
-    def draw(self, is_focused=False):
-        global flags
+    def _draw_open_box(self, is_focused=False):
         pygame.draw.rect(screen, DARK, self.rect, 1)
-
-        # Set flags
-        flags = {name:False for name in GameFlags._member_names_}
-        current_flags = [s.split('.')[-1] for s in settings.gameflags.to_jot_json()]
-        for current_flag in current_flags:
-            flags[current_flag] = True
-
-        if flags[self.label]:
-            pygame.draw.line(screen, DARK, self.rect.topleft, self.rect.bottomright, 2)
-            pygame.draw.line(screen, DARK, self.rect.topright, self.rect.bottomleft, 2)
 
         button_text = ' '.join([s.capitalize() for s in self.label.split('_')])
         draw_text(button_text, (self.rect.x + 20, self.rect.y), self.font)
 
         if is_focused:
             pygame.draw.rect(screen, RED, self.rect.inflate(6, 6), 2)
+
+    def _draw_checked_box(self):
+        self.flag = settings.__getattribute__(game_state.panels[self.group].setting_attribute).__getattribute__(game_state.panels[self.group].options[self.label])
+
+        if self.flag:
+            pygame.draw.line(screen, DARK, self.rect.topleft, self.rect.bottomright, 2)
+            pygame.draw.line(screen, DARK, self.rect.topright, self.rect.bottomleft, 2)
+
+    def draw(self, is_focused=False):
+
+        self._draw_open_box(is_focused)
+        self._draw_checked_box()
+
 
     def handle_event(self, evt):
         if evt.type == pygame.MOUSEBUTTONDOWN and evt.button == 1:
@@ -324,6 +329,31 @@ class CheckBox():
                 self.activate()
 
     def activate(self):
+        global settings, game_state
+
+        if self.group in game_state.panels:
+            self.flag = not self.flag
+            settings.__getattribute__(game_state.panels[self.group].setting_attribute).__setattr__(game_state.panels[self.group].options[self.label],self.flag)
+
+
+# —————— GameFlagsCheckBox ——————
+class GameFlagsCheckBox(CheckBox):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    def _draw_checked_box(self):
+        global flags
+        # Set flags
+        flags = {name:False for name in GameFlags._member_names_}
+        current_flags = [s.split('.')[-1] for s in settings.gameflags.to_jot_json()]
+        for current_flag in current_flags:
+            flags[current_flag] = True
+
+        if flags[self.label]:
+            pygame.draw.line(screen, DARK, self.rect.topleft, self.rect.bottomright, 2)
+            pygame.draw.line(screen, DARK, self.rect.topright, self.rect.bottomleft, 2)
+
+    def activate(self):
         global flags
 
         flags[self.label] = not flags[self.label]
@@ -332,6 +362,7 @@ class CheckBox():
         settings.fix_flag_conflicts()
 
 # —————— Slider ——————
+# TODO: Fix text distance from slider distance
 class Slider():
     def __init__(self, pos, label, group, increment = 10, min_val=1, max_val=9, start_val=None):
 
@@ -500,7 +531,7 @@ active_panel_dict['flags'] = ActivePanel(options = flags,
                                   location = 5,
                                   name = 'flags')            
 
-active_panel_dict['options'] = ActivePanel(options = ctopt_sliders,
+active_panel_dict['options'] = ActivePanel(options = {**ctopt_sliders, **ctopt_flags},
                                   setting_attribute = 'ctoptions',
                                   location = 6,
                                   name = 'options')   
@@ -559,20 +590,18 @@ active_panel_dict['tabs'].widgets = [ Slider((PANEL_X, y), lbl, "tabs") for y, l
 
 # Game flags
 flag_buttons = [(column_start_location + (font_flags.get_height()+1)*i, s) for i, s in  enumerate(flags)]
-active_panel_dict['flags'].widgets = [ CheckBox((PANEL_X, y), lbl, font_flags) for y, lbl in flag_buttons]
+active_panel_dict['flags'].widgets = [ GameFlagsCheckBox((PANEL_X, y), lbl, font_flags, "flags") for y, lbl in flag_buttons]
 
 
 # Game Options
-ctopt_flags = ['stereo_audio', 'save_menu_cursor', 'save_battle_cursor', 'save_tech_cursor', 'skill_item_info']
-ctopt_flags = {key:value for key, value in ctopts.items() if value in ctopt_flags}
+option_buttons = [(button_start + button_step*i, s) for i, s in  enumerate(ctopt_flags.keys())]
+ctopt_flag_buttons = [ CheckBox((PANEL_X, y), lbl, font, "options") for y, lbl in option_buttons]
 
-ctopt_sliders = ['battle_speed', 'battle_msg_speed', 'menu_background']
-ctopt_sliders = {key:value for key, value in  ctopts.items() if value in ctopt_sliders}
+cstart = ctopt_flag_buttons[-1].pos[1]+button_step*2 
+option_buttons = [(cstart + button_step*i, s) for i, s in  enumerate(ctopt_sliders)]
+ctopt_slider_buttons = [ Slider((PANEL_X, y), lbl, "options", min_val = 0, max_val = 7) for y, lbl in option_buttons]
 
-print 
-# TODO: Implement ctoption flags
-option_buttons = [(button_start + button_step*i, s) for i, s in  enumerate(ctopt_sliders)]
-active_panel_dict['options'].widgets = [ Slider((PANEL_X, y), lbl, "options", min_val = 0, max_val = 7) for y, lbl in option_buttons]
+active_panel_dict['options'].widgets = ctopt_flag_buttons + ctopt_slider_buttons
 
 
 # —————— Initialize game state ——————
