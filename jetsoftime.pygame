@@ -15,7 +15,7 @@ import randomizer
 import ctoptions
 from randosettings import Settings, GameFlags, Difficulty, ShopPrices, \
     TechOrder, TabSettings, TabRandoScheme, ROSettings, ROFlags, \
-    CosmeticFlags, GameMode, MysterySettings, CharNames
+    CosmeticFlags, GameMode, CharNames
 
 
 """
@@ -62,7 +62,8 @@ pygame.init()
 screen = pygame.display.set_mode((0, 0), pygame.FULLSCREEN)
 screen_width, screen_height = screen.get_size()
 font = pygame.font.SysFont(None, 24)
-font_flags = pygame.font.SysFont(None, 15)
+font_flags = pygame.font.SysFont(None, 24)
+FPS = 60
 
 # —————— Input init ——————
 pygame.joystick.init()
@@ -82,6 +83,9 @@ DARKGRAY = (100, 100, 100)
 DARK = (50, 50, 50)
 BLUE = (0, 120, 215)
 RED = (200, 0, 0)
+
+FOCUS_COLOR = RED
+SELECTED_COLOR = BLUE
 
 # —————— Sounds ——————
 pygame.mixer.init()
@@ -134,6 +138,7 @@ class GameState():
         self.generating_rom = False
         self.rom_name = ''
         self.rom_timer = None
+        self.rom_complete_time = 2000
         self.rom_complete_sound = False
 
         self.lock_controls = False
@@ -186,8 +191,11 @@ class GameState():
         rando.set_random_config()
 
         base_name, _ = os.path.splitext(rom_file)
+        out_dir = Path(output_path)
         writer = randomizer.RandomizerWriter(rando, base_name=base_name)
-        writer.write_output_rom(Path(output_path))
+        writer.write_output_rom(out_dir)
+        writer.write_spoiler_log(out_dir)
+        writer.write_json_spoiler_log(out_dir)
         
         self.generating_rom=False
         rom_generate_sound.stop()
@@ -213,11 +221,10 @@ class Button():
         self.callback = callback
 
     def draw(self, is_focused=False):
-        color = BLUE if self.rect.collidepoint(pygame.mouse.get_pos()) else GRAY
-        pygame.draw.rect(screen, color, self.rect)
+        pygame.draw.rect(screen, GRAY, self.rect)
         draw_text(self.text, (self.rect.x + 10, self.rect.y + 8), font)
         if is_focused:
-            pygame.draw.rect(screen, RED, self.rect, 2)
+            pygame.draw.rect(screen, FOCUS_COLOR, self.rect, 2)
 
     def handle_event(self, evt):
         if evt.type == pygame.MOUSEBUTTONDOWN and evt.button == 1:
@@ -261,7 +268,7 @@ class RadioButton():
             pygame.draw.circle(screen, DARK, self.pos, self.radius - 3)
 
         if is_focused:
-            pygame.draw.circle(screen, RED, self.pos, self.radius + 4, 2)
+            pygame.draw.circle(screen, FOCUS_COLOR, self.pos, self.radius + 4, 2)
 
     def handle_event(self, evt):
         if evt.type == pygame.MOUSEBUTTONDOWN and evt.button == 1:
@@ -288,7 +295,7 @@ class RadioButton():
 
 # —————— CheckBox ——————
 class CheckBox():
-    def __init__(self, pos, label, font, group):
+    def __init__(self, pos, label, font, group, *args, **kwargs):
         self.pos = pos
         self.radius = int(font.get_height())
         self.rect = pygame.Rect(pos[0], pos[1], self.radius, self.radius)
@@ -304,10 +311,18 @@ class CheckBox():
         draw_text(button_text, (self.rect.x + 20, self.rect.y), self.font)
 
         if is_focused:
-            pygame.draw.rect(screen, RED, self.rect.inflate(6, 6), 2)
+            pygame.draw.rect(screen, FOCUS_COLOR, self.rect.inflate(6, 6), 2)
 
     def _draw_checked_box(self):
-        self.flag = settings.__getattribute__(game_state.panels[self.group].setting_attribute).__getattribute__(game_state.panels[self.group].options[self.label])
+
+
+        if self.group in game_state.panels: # Single
+            self.flag = settings.__getattribute__(game_state.panels[self.group].setting_attribute).__getattribute__(game_state.panels[self.group].options[self.label])
+        else: # Multi Category
+            for g in game_state.panels.values():
+                if g.categories and self.group in g.options:
+                    self.flag = settings.__getattribute__(g.setting_attribute[self.group]).__getattribute__(g.options[self.group][self.label])
+                    break
 
         if self.flag:
             pygame.draw.line(screen, DARK, self.rect.topleft, self.rect.bottomright, 2)
@@ -331,40 +346,91 @@ class CheckBox():
     def activate(self):
         global settings, game_state
 
-        if self.group in game_state.panels:
-            self.flag = not self.flag
+        self.flag = not self.flag
+        if self.group in game_state.panels: # Single
             settings.__getattribute__(game_state.panels[self.group].setting_attribute).__setattr__(game_state.panels[self.group].options[self.label],self.flag)
+        else: # Multi Category
+            for g in game_state.panels.values():
+                if g.categories and self.group in g.options:
+                    settings.__getattribute__(g.setting_attribute[self.group]).__setattr__(g.options[self.group][self.label],self.flag)
+                    break
 
 
-# —————— GameFlagsCheckBox ——————
-class GameFlagsCheckBox(CheckBox):
+# —————— SerializableFlagCheckBox ——————
+class SerializableFlagCheckBox(CheckBox):
     def __init__(self, *args, **kwargs):
+        self.flags = {}
+        self.flag_class = None
+        
+        self.__dict__.update(kwargs)
         super().__init__(*args, **kwargs)
 
-    def _draw_checked_box(self):
-        global flags
-        # Set flags
-        flags = {name:False for name in GameFlags._member_names_}
-        current_flags = [s.split('.')[-1] for s in settings.gameflags.to_jot_json()]
-        for current_flag in current_flags:
-            flags[current_flag] = True
+    def _get_attribute(self,obj, multi = False):
+        if multi:
+            attribute = obj.setting_attribute[self.group]
+        else:
+            attribute = obj.panels[self.group].setting_attribute
 
-        if flags[self.label]:
+        s = settings
+        for attr in attribute.split('.'):
+            s = s.__getattribute__(attr)
+
+        return s
+
+    def _set_attribute(self, obj, value, multi = False):
+        global settings
+
+        if multi:
+            attribute = obj.setting_attribute[self.group]
+        else:
+            attribute = obj.panels[self.group].setting_attribute
+            
+        attrs = attribute.split('.')
+        if len(attrs)>1:
+            settings.__getattribute__(attrs[0]).__setattr__(attrs[1], value) # TODO: Generalize this
+        else:
+            settings.__setattr__(attribute, value)
+
+    def _draw_checked_box(self):
+        # Set flags
+        for name in self.flag_class._member_names_:
+            self.flags[name] = False
+
+        if self.group in game_state.panels: # Single
+            current_flags = [s.split('.')[-1] for s in self._get_attribute(game_state).to_jot_json()]
+        else: # Multi Category
+            for g in game_state.panels.values():
+                if g.categories and self.group in g.options:
+                    current_flags = [s.split('.')[-1] for s in self._get_attribute(g, multi=True).to_jot_json()]
+                    break
+
+        
+        for current_flag in current_flags:
+            self.flags[current_flag] = True
+
+        if self.flags[self.label]:
             pygame.draw.line(screen, DARK, self.rect.topleft, self.rect.bottomright, 2)
             pygame.draw.line(screen, DARK, self.rect.topright, self.rect.bottomleft, 2)
 
     def activate(self):
-        global flags
+        global settings
 
-        flags[self.label] = not flags[self.label]
-        flags_value = sum([GameFlags._member_map_[name].value for name, is_set in flags.items() if is_set])
-        settings.gameflags = GameFlags(flags_value)
+        self.flags[self.label] = not self.flags[self.label]
+        flags_value = sum([self.flag_class._member_map_[name].value for name, is_set in self.flags.items() if is_set])
+        flag_set_value = self.flag_class(flags_value)
+        if self.group in game_state.panels: # Single
+            self._set_attribute(game_state, flag_set_value)
+        else: # Multi Category
+            for g in game_state.panels.values():
+                if g.categories and self.group in g.options:
+                    self._set_attribute(g, flag_set_value, multi=True)
+                    break
+
         settings.fix_flag_conflicts()
 
 # —————— Slider ——————
-# TODO: Fix text distance from slider distance
 class Slider():
-    def __init__(self, pos, label, group, increment = 10, min_val=1, max_val=9, start_val=None):
+    def __init__(self, pos, label, group, increment = 10, min_val=1, max_val=9, start_val=None, zero_indexed = False):
 
         self.label = label
         self.group = group
@@ -381,6 +447,7 @@ class Slider():
         self.handle_radius = 5
         self.handle_y = self.y+self.radius/2
         self.is_focused = False
+        self.zero_indexed = zero_indexed
 
         self.rect = pygame.Rect(self.x, self.y, self.length, self.radius)
 
@@ -406,13 +473,13 @@ class Slider():
         pygame.draw.circle(screen, DARK, (self.handle_x, self.handle_y), self.handle_radius)
 
         # Value text
-        txt = font.render(f"{self.value}", True, DARK)
-        screen.blit(txt, (self.x + self.length + 15, self.handle_y - txt.get_height()//2))
+        value_text = f"{self.value+self.zero_indexed}"
+        draw_text(value_text, (self.x + self.length + 15, self.handle_y - font.get_height()//2), font)
 
         if game_state.lock_controls and self.is_focused:
-            pygame.draw.rect(screen, BLUE, self.rect.inflate(6, 6), 2)
+            pygame.draw.rect(screen, SELECTED_COLOR, self.rect.inflate(6, 6), 2)
         elif self.is_focused:
-            pygame.draw.rect(screen, RED, self.rect.inflate(6, 6), 2)
+            pygame.draw.rect(screen, FOCUS_COLOR, self.rect.inflate(6, 6), 2)
         
 
     def handle_event(self, evt):
@@ -472,6 +539,7 @@ presets['Legacy of Cyrus'].gameflags = (GameFlags.FIX_GLITCH |
                                         GameFlags.FAST_PENDANT |
                                         GameFlags.UNLOCKED_MAGIC |
                                         GameFlags.FAST_TABS |
+                                        GameFlags.BOSS_RANDO | # Added temporarily (but permanently?) for tournament
                                         GameFlags.GEAR_RANDO)
 presets['Legacy of Cyrus'].ro_settings.flags = ROFlags.BOSS_SPOT_HP
 
@@ -489,9 +557,36 @@ presets['Gato Cup'].tab_settings.speed_tab_max = 1
 presets['Millennial Prix'].gameflags = presets['Millennial Prix'].gameflags | GameFlags.FAST_TABS
 presets['Millennial Prix'].ro_settings.flags = ROFlags.BOSS_SPOT_HP
 
+# Seperate flags into seperate categories
 
+cosmetic_flags = {name:False for name in CosmeticFlags._member_names_}
+game_flags =  {name:False for name in GameFlags._member_names_}
+ro_flags =  {name:False for name in ROFlags._member_names_}
 
-flags =  {name:False for name in GameFlags._member_names_}
+logic_tweak_flags = {
+'Flags that Add a Key Item':[ 'RESTORE_JOHNNY_RACE', 'RESTORE_TOOLS'],
+'Flags that Add/Remove a Key Item Spot':['ADD_BEKKLER_SPOT', 'ADD_CYRUS_SPOT', 'ADD_OZZIE_SPOT', 
+                                         'ADD_RACELOG_SPOT', 'VANILLA_ROBO_RIBBON', 'REMOVE_BLACK_OMEN_SPOT'],
+'Flags that are Spot-Neutral':['ADD_SUNKEEP_SPOT', 'SPLIT_ARRIS_DOME', 'VANILLA_DESERT', 
+                               'UNLOCKED_SKYGATES', 'ROCKSANITY']
+}
+logic_tweak_flags = {key:{name:False for name in value} for key,value in logic_tweak_flags.items()}
+
+common_flags = {
+'Common':['FIX_GLITCH','ZEAL_END','FAST_PENDANT','UNLOCKED_MAGIC','CHRONOSANITY','TAB_TREASURES',
+          'BOSS_RANDO','GEAR_RANDO','CHAR_RANDO','HEALING_ITEM_RANDO','TECH_DAMAGE_RANDO','EPOCH_FAIL'],
+'Quality of Life':['VISIBLE_HEALTH','BOSS_SIGHTSCOPE','FAST_TABS','FREE_MENU_GLITCH'],
+'Boss Rando Flags':ROFlags._member_names_
+}
+common_flags = {key:{name:False for name in value} for key,value in common_flags.items()}
+
+used_flags = [name for value in logic_tweak_flags.values() for name in value]
+used_flags += [name for value in common_flags.values() for name in value]
+
+leftover_flags = {name:False for name in GameFlags._member_names_ if name not in used_flags}
+extra_flags = {"Extra":leftover_flags, "Cosmetic":cosmetic_flags}
+
+# Game Options
 tab_options = {f"{key.split('_')[0].capitalize()} Tab {key.split('_')[1].capitalize()}":key for key in TabSettings().to_jot_json() if key.endswith('max') or key.endswith('min')}
 ctopts = {' '.join([s.capitalize() for s in key.split('_')]):key for key in dict(ctoptions.CTOpts().__iter__())}
 ctopt_flags = ['stereo_audio', 'save_menu_cursor', 'save_battle_cursor', 'save_tech_cursor', 'skill_item_info']
@@ -499,12 +594,14 @@ ctopt_flags = {key:value for key, value in ctopts.items() if value in ctopt_flag
 
 ctopt_sliders = ['battle_speed', 'battle_msg_speed', 'menu_background']
 ctopt_sliders = {key:value for key, value in  ctopts.items() if value in ctopt_sliders}
-# Presets
+
+# Panels
 active_panel_dict = {}
 active_panel_dict['presets'] = ActivePanel(options=presets,
                                     setting_attribute = 'preset_choice',
                                     location = 0,
                                     name = 'presets')
+
 active_panel_dict['mode'] = ActivePanel(options=GameMode.inv_str_dict(),
                                  setting_attribute = 'game_mode',
                                  location = 1,
@@ -527,29 +624,50 @@ active_panel_dict['tabs'] = ActivePanel(options=tab_options,
                                  location = 4,
                                  name = 'tabs')
 
-active_panel_dict['flags'] = ActivePanel(options = flags,
+active_panel_dict['common_flags'] = ActivePanel(options = common_flags,
                                   location = 5,
-                                  name = 'flags')            
+                                  categories = common_flags.keys(), 
+                                  setting_attribute = {'Common':'gameflags','Quality of Life':'gameflags','Boss Rando Flags':'ro_settings.flags'},
+                                  name = 'common_flags')            
+
+active_panel_dict['logic_tweak'] = ActivePanel(options = logic_tweak_flags,
+                                  location = 6,
+                                  categories = logic_tweak_flags.keys(), 
+                                  setting_attribute = {key:'gameflags' for key in logic_tweak_flags},
+                                  name = 'logic_tweak')       
+
+active_panel_dict['extra_flags'] = ActivePanel(options = extra_flags,
+                                  location = 7,
+                                  categories = extra_flags.keys(), 
+                                  setting_attribute = {"Extra":'gameflags', "Cosmetic":'cosmetic_flags'},
+                                  name = 'extra_flags')        
 
 active_panel_dict['options'] = ActivePanel(options = {**ctopt_sliders, **ctopt_flags},
                                   setting_attribute = 'ctoptions',
-                                  location = 6,
+                                  location = 8,
                                   name = 'options')   
 
 # —————— Instantiate widgets ——————
 button_start = 50
 button_step = 30
+slider_step = 40
+mb_l = 140
+mb_h = 30
+mb_x = 20
+mb_step = 40
 buttons = [
-    #       x   y   h    l
-    Button((20, 20, 100, 30), "Presets", active_panel_dict['presets'].callback),
-    Button((20, 60, 100, 30), "Mode", active_panel_dict['mode'].callback),
-    Button((20, 100, 100, 30), "Difficulty", active_panel_dict['difficulty'].callback),
-    Button((20, 140, 100, 30), "Tech/Shop", active_panel_dict['techshop'].callback),
-    Button((20, 180, 100, 30), "Tabs", active_panel_dict['tabs'].callback),
-    Button((20, 220, 100, 30), "Flags", active_panel_dict['flags'].callback),
-    Button((20, 260, 100, 30), "Options", active_panel_dict['options'].callback), # TODO: Update Options name to something like Game Options of CT Options.  Requires updating button length
-    Button((20, screen_height - 80, 100, 30), "Generate", game_state.generate_rom),
-    Button((20, screen_height - 40, 100, 30), "Exit", game_state.exit_game)
+    #       x   y   l    h
+    Button((mb_x, mb_x+mb_step*0, mb_l, mb_h), "Presets", active_panel_dict['presets'].callback),
+    Button((mb_x, mb_x+mb_step*1, mb_l, mb_h), "Mode", active_panel_dict['mode'].callback),
+    Button((mb_x, mb_x+mb_step*2, mb_l, mb_h), "Difficulty", active_panel_dict['difficulty'].callback),
+    Button((mb_x, mb_x+mb_step*3, mb_l, mb_h), "Tech/Shop", active_panel_dict['techshop'].callback),
+    Button((mb_x, mb_x+mb_step*4, mb_l, mb_h), "Tabs", active_panel_dict['tabs'].callback),
+    Button((mb_x, mb_x+mb_step*5, mb_l, mb_h), "Common Flags", active_panel_dict['common_flags'].callback),
+    Button((mb_x, mb_x+mb_step*6, mb_l, mb_h), "Logic Tweaks", active_panel_dict['logic_tweak'].callback),
+    Button((mb_x, mb_x+mb_step*7, mb_l, mb_h), "Extra Flags", active_panel_dict['extra_flags'].callback),
+    Button((mb_x, mb_x+mb_step*8, mb_l, mb_h), "Game Options", active_panel_dict['options'].callback),
+    Button((mb_x, screen_height - mb_step*2, mb_l, mb_h), "Generate", game_state.generate_rom),
+    Button((mb_x, screen_height - mb_step*1, mb_l, mb_h), "Exit", game_state.exit_game)
 ]
 
 # TODO:  Can I move this to the class level?  Seems like a lot of duplicate code
@@ -584,22 +702,58 @@ shop_radios = [ RadioButton((PANEL_X, y), lbl, "shop")  for y, lbl in option_but
 active_panel_dict['techshop'].widgets =  {"Tech Order": tech_radios, 'Shop Prices': shop_radios}
 
 # Tab Settings
-option_buttons = [(button_start + button_step*i, s) for i, s in  enumerate(tab_options)]
+option_buttons = [(button_start + slider_step*i, s) for i, s in  enumerate(tab_options)]
 active_panel_dict['tabs'].widgets = [ Slider((PANEL_X, y), lbl, "tabs") for y, lbl in option_buttons]
 
+# Common Flags
+i_step =0
+active_panel_dict['common_flags'].widgets = {}
+common_flag_dict={'Common':dict(flags=game_flags,flag_class=GameFlags),
+                  'Quality of Life':dict(flags=game_flags,flag_class=GameFlags),
+                  'Boss Rando Flags':dict(flags=ro_flags,flag_class=ROFlags)}
+for icat, (title, value) in enumerate(common_flags.items()):
 
-# Game flags
-flag_buttons = [(column_start_location + (font_flags.get_height()+1)*i, s) for i, s in  enumerate(flags)]
-active_panel_dict['flags'].widgets = [ GameFlagsCheckBox((PANEL_X, y), lbl, font_flags, "flags") for y, lbl in flag_buttons]
+    start_loc = button_start+(font_flags.get_height()+2)*(2*icat+i_step) if i_step > 0 else button_start # Leave room for title
+
+    flag_buttons = [(start_loc + (font_flags.get_height()+2)*(i), s) for i, s in  enumerate(value)]
+    active_panel_dict['common_flags'].widgets[title]=[ SerializableFlagCheckBox((PANEL_X, y), lbl, font_flags, title, **common_flag_dict[title]) for y, lbl in flag_buttons]
+
+    i_step+=len(flag_buttons)
+
+# Logic Tweaks
+i_step =0
+active_panel_dict['logic_tweak'].widgets = {}
+for icat, (title, value) in enumerate(logic_tweak_flags.items()):
+
+    start_loc = button_start+(font_flags.get_height()+2)*(2*icat+i_step) if i_step > 0 else button_start # Leave room for title
+
+    flag_buttons = [(start_loc + (font_flags.get_height()+2)*(i), s) for i, s in  enumerate(value)]
+    active_panel_dict['logic_tweak'].widgets[title]=[ SerializableFlagCheckBox((PANEL_X, y), lbl, font_flags, title, flags = game_flags, flag_class = GameFlags) for y, lbl in flag_buttons]
+
+    i_step+=len(flag_buttons)
+
+# Extra flags
+i_step =0
+active_panel_dict['extra_flags'].widgets = {}
+extra_flag_dict=dict(Extra=dict(flags=game_flags,flag_class=GameFlags),
+                     Cosmetic=dict(flags=cosmetic_flags,flag_class=CosmeticFlags))
+for icat, (title, value) in enumerate(extra_flags.items()):
+
+    start_loc = button_start+(font_flags.get_height()+2)*(2*icat+i_step) if i_step > 0 else button_start # Leave room for title
+
+    flag_buttons = [(start_loc + (font_flags.get_height()+2)*(i), s) for i, s in  enumerate(value)]
+    active_panel_dict['extra_flags'].widgets[title]=[ SerializableFlagCheckBox((PANEL_X, y), lbl, font_flags, title, **extra_flag_dict[title]) for y, lbl in flag_buttons]
+
+    i_step+=len(flag_buttons)
 
 
 # Game Options
 option_buttons = [(button_start + button_step*i, s) for i, s in  enumerate(ctopt_flags.keys())]
 ctopt_flag_buttons = [ CheckBox((PANEL_X, y), lbl, font, "options") for y, lbl in option_buttons]
 
-cstart = ctopt_flag_buttons[-1].pos[1]+button_step*2 
-option_buttons = [(cstart + button_step*i, s) for i, s in  enumerate(ctopt_sliders)]
-ctopt_slider_buttons = [ Slider((PANEL_X, y), lbl, "options", min_val = 0, max_val = 7) for y, lbl in option_buttons]
+cstart = ctopt_flag_buttons[-1].pos[1]+slider_step*2 
+option_buttons = [(cstart + slider_step*i, s) for i, s in  enumerate(ctopt_sliders)]
+ctopt_slider_buttons = [ Slider((PANEL_X, y), lbl, "options", min_val = 0, max_val = 7,zero_indexed=True) for y, lbl in option_buttons]
 
 active_panel_dict['options'].widgets = ctopt_flag_buttons + ctopt_slider_buttons
 
@@ -619,13 +773,13 @@ while True:
     # When generating ROM, lock controls
     if game_state.generating_rom:
         continue
-    elif game_state.rom_timer and now - game_state.rom_timer <= 2000:
+    elif game_state.rom_timer and (now - game_state.rom_timer <= game_state.rom_complete_time):
 
         if game_state.rom_complete_sound:
+            draw_text(f"ROM Complete: {game_state.rom_name}", (PANEL_X, screen_height - 60), font, BLUE)
             game_state.rom_complete_sound = False
             rom_complete_sound.play()
 
-        draw_text(f"ROM Complete: {game_state.rom_name}", (PANEL_X, screen_height - 60), font, BLUE)
         pygame.display.flip()
     
         continue
@@ -714,4 +868,4 @@ while True:
             w.draw(is_focused=(game_state.focusable is w))
 
     pygame.display.flip()
-    clock.tick(60)
+    clock.tick(FPS)
