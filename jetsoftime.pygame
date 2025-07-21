@@ -574,7 +574,11 @@ logic_tweak_flags = {key:{name:False for name in value} for key,value in logic_t
 
 common_flags = {
 'Common':['FIX_GLITCH','ZEAL_END','FAST_PENDANT','UNLOCKED_MAGIC','CHRONOSANITY','TAB_TREASURES',
-          'BOSS_RANDO','GEAR_RANDO','CHAR_RANDO','HEALING_ITEM_RANDO','TECH_DAMAGE_RANDO','EPOCH_FAIL'],
+          'BOSS_RANDO','GEAR_RANDO','CHAR_RANDO','HEALING_ITEM_RANDO','TECH_DAMAGE_RANDO','EPOCH_FAIL',
+          #'TAB_RANDO','TAB_SHUFFLE',
+          'TREASURE_SHUFFLE',
+          #'SNAIL_PRICE_RANDO',
+          ],
 'Quality of Life':['VISIBLE_HEALTH','BOSS_SIGHTSCOPE','FAST_TABS','FREE_MENU_GLITCH'],
 'Boss Rando Flags':ROFlags._member_names_
 }
